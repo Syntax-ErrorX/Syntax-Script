@@ -1,5 +1,5 @@
 --[[
-    SYNTAX HUB - AUTO PERFECT BLOCK & AUTO PARRY V4.4 [KEYPRESS FIXED]
+    SYNTAX HUB - AUTO PB & PARRY V5.1 [FIXED ERRORS + MENU BIND]
     Grand Piece Online
 ]]
 
@@ -16,9 +16,6 @@ local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
 local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
-local Options = Library.Options
-local Toggles = Library.Toggles
-
 local Window = Library:CreateWindow({
     Title = 'SYNTAX HUB - GPO AUTO PB',
     Center = true, AutoShow = true, TabPadding = 8, MenuFadeTime = 0.2
@@ -26,14 +23,14 @@ local Window = Library:CreateWindow({
 
 local folderName = "syntax auto pb"
 local unknownAnimFile = folderName .. "/unknown_animations.txt"
-local customAnimFile = folderName .. "/custom_animations.txt"
-local remoteLogFile = folderName .. "/remotes.txt"
+local customAnimFile  = folderName .. "/custom_animations.txt"
+local remoteLogFile   = folderName .. "/remotes.txt"
 if not isfolder(folderName) then makefolder(folderName) end
 if not isfile(unknownAnimFile) then writefile(unknownAnimFile, "-- Unknown Animations --\n") end
-if not isfile(customAnimFile) then writefile(customAnimFile, "-- Custom Animations --\n") end
-if not isfile(remoteLogFile) then writefile(remoteLogFile, "-- Remote Log --\n") end
+if not isfile(customAnimFile)  then writefile(customAnimFile,  "-- Custom Animations --\n") end
+if not isfile(remoteLogFile)   then writefile(remoteLogFile,   "-- Remote Log --\n") end
 
--- Status GUI
+-- ===== STATUS GUI =====
 local StatusGui = Instance.new("ScreenGui")
 StatusGui.Name = "SyntaxHubStatus"
 StatusGui.ResetOnSpawn = false
@@ -42,8 +39,8 @@ StatusLabel.Parent = StatusGui
 StatusLabel.BackgroundColor3 = Color3.fromRGB(0,0,0)
 StatusLabel.BackgroundTransparency = 0.5
 StatusLabel.BorderSizePixel = 0
-StatusLabel.Position = UDim2.new(0.5, -150, 0, 60)
-StatusLabel.Size = UDim2.new(0, 300, 0, 40)
+StatusLabel.Position = UDim2.new(0.5, -160, 0, 60)
+StatusLabel.Size = UDim2.new(0, 320, 0, 40)
 StatusLabel.Font = Enum.Font.GothamBold
 StatusLabel.Text = "Status: Disabled"
 StatusLabel.TextColor3 = Color3.fromRGB(200,200,200)
@@ -59,82 +56,33 @@ end
 
 local Tabs = {
     Main = Window:AddTab('Main'),
+    Player = Window:AddTab('Player'),
+    Fix = Window:AddTab('BLOCK FIX'),
     Anims = Window:AddTab('Animations'),
-    Debug = Window:AddTab('Debug'),
     ['UI Settings'] = Window:AddTab('UI Settings'),
 }
 
 local Settings = {
-    Enabled = false, BlockPlayers = true, MaxDistance = 150, BlockDelay = 0,
-    ParryEnabled = false, ParryDistance = 12, Debug = false,
-    BlockKey = Enum.KeyCode.F,
-    HoldTime = 0.30,
-    Method = 'Both',
-    ConstantBlock = false,
-    ConstantRange = 15,
-    CombatKeys = {
+    Enabled=false, BlockPlayers=true, MaxDistance=150, BlockDelay=0,
+    ParryEnabled=false, ParryDistance=12, Debug=false,
+    BlockKey=Enum.KeyCode.F, HoldTime=0.30, Method='Both',
+    UseRemote=false, ConstantBlock=false, ConstantRange=15,
+    CombatKeys={
         [Enum.UserInputType.MouseButton1]=false,[Enum.KeyCode.E]=false,[Enum.KeyCode.R]=false,
         [Enum.KeyCode.T]=false,[Enum.KeyCode.Q]=false,[Enum.KeyCode.Z]=false,
         [Enum.KeyCode.X]=false,[Enum.KeyCode.C]=false,[Enum.KeyCode.V]=false,
     },
-    RecorderEnabled = true, RecorderRadius = 150, BlockUnknown = true, RecorderCustomName = "",
+    RecorderEnabled=true, RecorderRadius=150, BlockUnknown=true, RecorderCustomName="",
+    -- New Movement Settings
+    WalkSpeedEnabled=false, WalkSpeedValue=16,
+    FlyEnabled=false, FlySpeed=50
 }
 
 local CombatState = { ActiveKeys={}, LastActionTime=0, ComboCooldown=0.5, LastKeyAllowedBlocking=nil }
 local Stats = { Total=0, Blocks=0, Parries=0, Last="None" }
 local RecordedAnimations, ActiveCharacters, blockedAnims = {}, {}, {}
 
--- ===== VK CODE CONVERTER =====
-local function getVK(keyCode)
-    local n = keyCode.Name
-    if #n == 1 then
-        local b = n:upper():byte()
-        if (b >= 65 and b <= 90) or (b >= 48 and b <= 57) then return b end
-    end
-    local map = { Space=0x20, LeftShift=0xA0, RightShift=0xA1, LeftControl=0xA2,
-        RightControl=0xA3, Tab=0x09, LeftAlt=0x12, One=0x31, Two=0x32, Three=0x33 }
-    return map[n] or 0x46
-end
-
--- ===== THE BLOCK FUNCTION (FIXED) =====
-local blocking = false
-local function doBlock(isParry)
-    if blocking then return end
-    blocking = true
-    task.spawn(function()
-        if not isParry and Settings.BlockDelay > 0 then
-            task.wait(Settings.BlockDelay)
-        end
-
-        local key = Settings.BlockKey
-        local vk = getVK(key)
-        local m = Settings.Method
-
-        -- PRESS DOWN
-        if m == 'VirtualInput' or m == 'Both' then
-            pcall(function() VIM:SendKeyEvent(true, key, false, game) end)
-        end
-        if m == 'keypress' or m == 'Both' then
-            pcall(function() if keypress then keypress(vk) end end)
-        end
-
-        -- HOLD (this is the important part)
-        task.wait(Settings.HoldTime)
-
-        -- RELEASE
-        if m == 'VirtualInput' or m == 'Both' then
-            pcall(function() VIM:SendKeyEvent(false, key, false, game) end)
-        end
-        if m == 'keypress' or m == 'Both' then
-            pcall(function() if keyrelease then keyrelease(vk) end end)
-        end
-
-        task.wait(0.05)
-        blocking = false
-    end)
-end
-
--- Notification queue
+-- ===== NOTIFICATIONS =====
 local NQ = { q={}, busy=false, cd=0.4, last=0 }
 function NQ:Add(msg, dur)
     if #self.q >= 6 then return end
@@ -149,9 +97,94 @@ function NQ:Run()
             local now = tick()
             if now - self.last < self.cd then task.wait(self.cd - (now - self.last)) end
             local n = table.remove(self.q, 1)
-            if n then Library:Notify(n.msg, n.dur) self.last = tick() end
+            if n then pcall(function() Library:Notify(n.msg, n.dur) end); self.last = tick() end
         end
         self.busy = false
+    end)
+end
+
+-- ===== VK CONVERTER =====
+local function getVK(kc)
+    local n = kc.Name
+    if #n == 1 then
+        local b = n:upper():byte()
+        if (b>=65 and b<=90) or (b>=48 and b<=57) then return b end
+    end
+    local map = { Space=0x20, LeftShift=0xA0, RightShift=0xA1, LeftControl=0xA2,
+                  RightControl=0xA3, Tab=0x09, LeftAlt=0x12, One=0x31, Two=0x32, Three=0x33 }
+    return map[n] or 0x46
+end
+
+-- ===== REMOTE CAPTURE =====
+local Recording = false
+local Captured = {}
+local SlotStart, SlotEnd = nil, nil
+local HookOK = false
+
+pcall(function()
+    if hookmetamethod and getnamecallmethod and newcclosure then
+        local old
+        old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local m = getnamecallmethod()
+            if Recording and (m == "FireServer" or m == "InvokeServer") then
+                local args = {...}
+                local ok, path = pcall(function() return self:GetFullName() end)
+                if ok then
+                    local argStr = ""
+                    for i, v in ipairs(args) do argStr = argStr .. tostring(v) .. (i < #args and ", " or "") end
+                    local label = "#" .. (#Captured + 1) .. " " .. self.Name .. " [" .. argStr .. "]"
+                    table.insert(Captured, { obj=self, method=m, args=args, label=label, path=path })
+                    pcall(function() appendfile(remoteLogFile, path .. " | " .. argStr .. "\n") end)
+                end
+            end
+            return old(self, ...)
+        end))
+        HookOK = true
+    end
+end)
+
+local function fireSlot(slot)
+    if not slot then return false end
+    return (pcall(function()
+        if slot.method == "InvokeServer" then
+            slot.obj:InvokeServer(table.unpack(slot.args))
+        else
+            slot.obj:FireServer(table.unpack(slot.args))
+        end
+    end))
+end
+
+-- ===== BLOCK FUNCTION =====
+local blocking = false
+local function doBlock(isParry)
+    if blocking then return end
+    blocking = true
+    task.spawn(function()
+        if not isParry and Settings.BlockDelay > 0 then task.wait(Settings.BlockDelay) end
+
+        if Settings.UseRemote and SlotStart then
+            fireSlot(SlotStart)
+            task.wait(Settings.HoldTime)
+            if SlotEnd then fireSlot(SlotEnd) end
+        else
+            local key, vk, m = Settings.BlockKey, getVK(Settings.BlockKey), Settings.Method
+            if m == 'VirtualInput' or m == 'Both' then
+                pcall(function() VIM:SendKeyEvent(true, key, false, game) end)
+            end
+            if m == 'keypress' or m == 'Both' then
+                pcall(function() if keypress then keypress(vk) end end)
+            end
+            task.wait(Settings.HoldTime)
+            if m == 'VirtualInput' or m == 'Both' then
+                pcall(function() VIM:SendKeyEvent(false, key, false, game) end)
+            end
+            if m == 'keypress' or m == 'Both' then
+                pcall(function() if keyrelease then keyrelease(vk) end end)
+            end
+        end
+
+        task.wait(0.05)
+        blocking = false
     end)
 end
 
@@ -162,6 +195,7 @@ local function logHit(name, id, isParry)
     NQ:Add(string.format("%s %s | %s", isParry and "⚔️" or "🛡️", name or "?", id or "?"), 0.5)
 end
 
+-- ===== ANIMATION DATA =====
 local Ignored = {
     ['102847582739519']=true,['9710431811']=true,['9703995286']=true,['4910485611']=true,['9711831861']=true,['134877403213295']=true,['18841102170']=true,['18841081185']=true,['106763696159860']=true,['92811333533670']=true,['78584318919493']=true,['118247933649869']=true,['138848037207334']=true,['98963988224403']=true,['9712102429']=true,['98166532936064']=true,['7584947295']=true,['18841080472']=true,['2942644324']=true,['2942643830']=true,['2942641670']=true,['5392930263']=true,['5392869763']=true,['6032355961']=true,['6032356414']=true,['6028142920']=true,['6026084898']=true,['6026085284']=true,['6026082598']=true,['11838527249']=true,['11838531612']=true,['11838526480']=true,['4910406979']=true,['3044991033']=true,['13243427337']=true,['129305042300099']=true,['74744607717391']=true,['82497770045941']=true,['11838527981']=true,['119334509242358']=true,['11838529559']=true,['11838530329']=true,['11838528512']=true,['13243423773']=true,['4899959433']=true,['99564327193459']=true,['90004694910626']=true,['4907577925']=true,['14986407007']=true,['3027864591']=true,['3027717390']=true,['3027719314']=true,['15059163245']=true,['15374681990']=true,['15059161952']=true,['72729463849772']=true,['15382115992']=true,['15382065457']=true,['13630769186']=true,['17650838050']=true,['5517298834']=true,['11093531300']=true,['6043954920']=true,['7075728341']=true,['10001705684']=true,['507765644']=true,['4563261864']=true,['2095054253']=true,['9984793787']=true,['5796457289']=true,['4126956669']=true,['5796460384']=true,['10001707271']=true,['507766388']=true,['507766666']=true,['507766951']=true,['507767234']=true,['507767714']=true,['913376220']=true,['913402848']=true,['913403323']=true,['913403938']=true,['913384386']=true,['10921082554']=true,['10921083856']=true,['507784897']=true,['507785072']=true,['507765000']=true,['507767968']=true,['507768133']=true,['507768375']=true,['507768851']=true,['3333499508']=true,['3333497031']=true,['4841397952']=true,['3695333486']=true,['3695335779']=true,['3333136415']=true,['4049037604']=true,['3337966527']=true,['3360686498']=true,['3576686446']=true,['3576968026']=true,['10921127235']=true,['3541114300']=true,['3541111181']=true
 }
@@ -197,7 +231,9 @@ local function recordUnknown(id, target, inst)
     RecordedAnimations[id] = true
     local n = getAnimName(inst)
     if n == "Unknown" and Settings.RecorderCustomName ~= "" then n = Settings.RecorderCustomName end
-    appendfile(unknownAnimFile, string.format("%s | %s | %s | [%s]\n", id, os.date("%X"), target or "?", n))
+    pcall(function()
+        appendfile(unknownAnimFile, string.format("%s | %s | %s | [%s]\n", id, os.date("%X"), target or "?", n))
+    end)
     NQ:Add("📝 New: " .. n .. " (" .. id .. ")", 3)
 end
 
@@ -235,14 +271,88 @@ end)
 Connections.HB = RunService.Heartbeat:Connect(function()
     if Settings.Enabled or Settings.ParryEnabled then
         if isInCombat() then updateStatus("Player Combo", Color3.fromRGB(255,170,0))
+        elseif Settings.UseRemote then updateStatus("Remote Mode Ready", Color3.fromRGB(0,200,255))
         elseif Settings.ParryEnabled then updateStatus("Parry Ready", Color3.fromRGB(255,215,0))
         else updateStatus("Ready", Color3.fromRGB(255,255,255)) end
     else
         updateStatus("Disabled", Color3.fromRGB(200,200,200))
     end
+    
+    -- WALKSPEED LOOP
+    if Settings.WalkSpeedEnabled then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = Settings.WalkSpeedValue
+            end
+        end
+    end
 end)
 
--- ===== CONSTANT BLOCK MODE (fallback test) =====
+-- ===== FLY LOOP =====
+local flyBg, flyBv
+local function setFlyState(state)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp then return end
+
+    if state then
+        if hum then hum.PlatformStand = true end
+        if flyBg then flyBg:Destroy() end
+        if flyBv then flyBv:Destroy() end
+        
+        flyBg = Instance.new("BodyGyro", hrp)
+        flyBg.P = 9e4
+        flyBg.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+        flyBg.cframe = hrp.CFrame
+        
+        flyBv = Instance.new("BodyVelocity", hrp)
+        flyBv.velocity = Vector3.new(0,0,0)
+        flyBv.maxForce = Vector3.new(9e9, 9e9, 9e9)
+    else
+        if hum then hum.PlatformStand = false end
+        if flyBg then flyBg:Destroy(); flyBg = nil end
+        if flyBv then flyBv:Destroy(); flyBv = nil end
+    end
+end
+
+Connections.FlyRun = RunService.RenderStepped:Connect(function()
+    if Settings.FlyEnabled and flyBg and flyBv then
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local cam = Workspace.CurrentCamera
+        local moveVec = Vector3.new(0,0,0)
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVec = moveVec + cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVec = moveVec - cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVec = moveVec + cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVec = moveVec - cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVec = moveVec + Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveVec = moveVec - Vector3.new(0,1,0) end
+
+        flyBg.cframe = cam.CFrame
+        if moveVec.Magnitude > 0 then
+            flyBv.velocity = moveVec.Unit * Settings.FlySpeed
+        else
+            flyBv.velocity = Vector3.new(0,0,0)
+        end
+    end
+end)
+
+Connections.CharAdded = LocalPlayer.CharacterAdded:Connect(function(char)
+    if Settings.FlyEnabled then
+        task.wait(0.5) -- wait for HRP loading
+        setFlyState(true)
+    end
+end)
+
+-- ===== CONSTANT BLOCK =====
 task.spawn(function()
     local held = false
     while task.wait(0.15) do
@@ -253,25 +363,30 @@ task.spawn(function()
             local near = false
             if myHrp then
                 for c in pairs(ActiveCharacters) do
-                    if c and c.Parent and c ~= myChar then
+                    if c and c.Parent then
                         local h = c:FindFirstChild("HumanoidRootPart")
                         local hum = c:FindFirstChildOfClass("Humanoid")
-                        if h and hum and hum.Health > 0 then
-                            if (h.Position - myHrp.Position).Magnitude <= Settings.ConstantRange then
-                                near = true break
-                            end
+                        if h and hum and hum.Health > 0
+                           and (h.Position - myHrp.Position).Magnitude <= Settings.ConstantRange then
+                            near = true; break
                         end
                     end
                 end
             end
             if near and not held then
                 held = true
-                pcall(function() VIM:SendKeyEvent(true, Settings.BlockKey, false, game) end)
-                pcall(function() if keypress then keypress(getVK(Settings.BlockKey)) end end)
+                if Settings.UseRemote and SlotStart then fireSlot(SlotStart)
+                else
+                    pcall(function() VIM:SendKeyEvent(true, Settings.BlockKey, false, game) end)
+                    pcall(function() if keypress then keypress(getVK(Settings.BlockKey)) end end)
+                end
             elseif not near and held then
                 held = false
-                pcall(function() VIM:SendKeyEvent(false, Settings.BlockKey, false, game) end)
-                pcall(function() if keyrelease then keyrelease(getVK(Settings.BlockKey)) end end)
+                if Settings.UseRemote and SlotEnd then fireSlot(SlotEnd)
+                else
+                    pcall(function() VIM:SendKeyEvent(false, Settings.BlockKey, false, game) end)
+                    pcall(function() if keyrelease then keyrelease(getVK(Settings.BlockKey)) end end)
+                end
             end
         elseif held then
             held = false
@@ -281,6 +396,7 @@ task.spawn(function()
     end
 end)
 
+-- ===== CHARACTER TRACKING =====
 local function setupChar(char)
     if not char or not char:IsA("Model") or ActiveCharacters[char] then return end
     if char == LocalPlayer.Character then return end
@@ -289,7 +405,7 @@ local function setupChar(char)
     local anim = hum:FindFirstChildOfClass("Animator")
     if not anim then
         hum.ChildAdded:Connect(function(c)
-            if c:IsA("Animator") then task.wait(0.2) setupChar(char) end
+            if c:IsA("Animator") then task.wait(0.2); setupChar(char) end
         end)
         return
     end
@@ -297,7 +413,7 @@ local function setupChar(char)
 
     local conn
     conn = anim.AnimationPlayed:Connect(function(track)
-        if not char.Parent then conn:Disconnect() ActiveCharacters[char] = nil return end
+        if not char.Parent then conn:Disconnect(); ActiveCharacters[char] = nil; return end
         if Players:GetPlayerFromCharacter(char) and not Settings.BlockPlayers then return end
 
         local myChar = LocalPlayer.Character
@@ -320,7 +436,6 @@ local function setupChar(char)
         local k = tostring(char:GetDebugId()) .. "_" .. id
         if blockedAnims[k] then return end
 
-        -- PARRY
         if Settings.ParryEnabled and dist <= Settings.ParryDistance then
             blockedAnims[k] = true
             task.delay(0.5, function() blockedAnims[k] = nil end)
@@ -329,7 +444,6 @@ local function setupChar(char)
             return
         end
 
-        -- NORMAL BLOCK
         local t = AnimTimings[id]
         if not t and Settings.RecorderEnabled and dist <= Settings.RecorderRadius then
             recordUnknown(id, char.Name, a)
@@ -348,11 +462,10 @@ local function setupChar(char)
     end)
 end
 
--- NPC scanner
 local function scan(f)
     if not f then return end
     for _, m in ipairs(f:GetChildren()) do if m:IsA("Model") then task.spawn(setupChar, m) end end
-    f.ChildAdded:Connect(function(c) if c:IsA("Model") then task.wait(0.4) setupChar(c) end end)
+    f.ChildAdded:Connect(function(c) if c:IsA("Model") then task.wait(0.4); setupChar(c) end end)
 end
 for _, n in ipairs({"NPCs","Enemies","Mobs","Living","Monsters","PlayerCharacters","Characters"}) do
     scan(Workspace:FindFirstChild(n))
@@ -363,58 +476,27 @@ end
 Workspace.DescendantAdded:Connect(function(d)
     if d:IsA("Animator") then
         local c = d.Parent and d.Parent.Parent
-        if c and c:IsA("Model") then task.wait(0.2) setupChar(c) end
+        if c and c:IsA("Model") then task.wait(0.2); setupChar(c) end
     end
 end)
 
--- ============ UI ============
+-- ============================ MAIN TAB ============================
 local L = Tabs.Main:AddLeftGroupbox('Auto Perfect Block')
-L:AddToggle('MainToggle', { Text='Enable Auto Block (P)', Default=false, Callback=function(v) Settings.Enabled=v end })
-L:AddToggle('ParryToggle', { Text='Enable Auto Parry', Default=false, Callback=function(v) Settings.ParryEnabled=v end })
-L:AddToggle('DebugToggle', { Text='Debug Mode', Default=false, Callback=function(v) Settings.Debug=v end })
-L:AddToggle('BlockPlayers', { Text='Block Players', Default=true, Callback=function(v) Settings.BlockPlayers=v end })
+local MainToggleRef = L:AddToggle('MainToggle', { Text='Enable Auto Block (P)', Default=false, Callback=function(v) Settings.Enabled=v end })
+L:AddToggle('ParryToggle',  { Text='Enable Auto Parry', Default=false, Callback=function(v) Settings.ParryEnabled=v end })
+L:AddToggle('DebugToggle',  { Text='Debug Mode',        Default=false, Callback=function(v) Settings.Debug=v end })
+L:AddToggle('BlockPlayers', { Text='Block Players',     Default=true,  Callback=function(v) Settings.BlockPlayers=v end })
 L:AddDivider()
-L:AddSlider('MaxDist', { Text='Block Distance', Default=150, Min=10, Max=300, Rounding=0, Suffix=' studs', Callback=function(v) Settings.MaxDistance=v end })
-L:AddSlider('ParryDist', { Text='Parry Distance', Default=12, Min=5, Max=50, Rounding=0, Suffix=' studs', Callback=function(v) Settings.ParryDistance=v end })
-L:AddSlider('BlockDelay', { Text='Block Delay', Default=0, Min=0, Max=0.4, Rounding=2, Suffix='s', Callback=function(v) Settings.BlockDelay=v end })
+L:AddSlider('MaxDist',    { Text='Block Distance', Default=150, Min=10, Max=300, Rounding=0, Suffix=' studs', Callback=function(v) Settings.MaxDistance=v end })
+L:AddSlider('ParryDist',  { Text='Parry Distance', Default=12,  Min=5,  Max=50,  Rounding=0, Suffix=' studs', Callback=function(v) Settings.ParryDistance=v end })
+L:AddSlider('BlockDelay', { Text='Block Delay',    Default=0,   Min=0,  Max=0.4, Rounding=2, Suffix='s',      Callback=function(v) Settings.BlockDelay=v end })
 
--- THE FIX SECTION
-local KB = Tabs.Main:AddLeftGroupbox('⚙️ Key Settings [FIX HERE]')
-KB:AddLabel('Block Key'):AddKeyPicker('BlockKeyPick', {
-    Default = 'F', NoUI = false, Text = 'Block Key',
-    Callback = function() end,
-    ChangedCallback = function(new) Settings.BlockKey = new end
-})
-KB:AddSlider('HoldTime', {
-    Text='Hold Duration', Default=0.30, Min=0.05, Max=1, Rounding=2, Suffix='s',
-    Tooltip='How long F is held. Try 0.3 - 0.5 if not blocking',
-    Callback=function(v) Settings.HoldTime=v end
-})
-KB:AddDropdown('MethodDrop', {
-    Values = { 'Both', 'VirtualInput', 'keypress' },
-    Default = 'Both', Text = 'Input Method',
-    Tooltip = 'Try each one if block does not work',
-    Callback = function(v) Settings.Method = v end
-})
-KB:AddDivider()
-KB:AddButton({ Text='🔧 TEST BLOCK NOW', Func=function()
-    doBlock(true)
-    Library:Notify('Pressed ' .. Settings.BlockKey.Name .. ' for ' .. Settings.HoldTime .. 's', 2)
-end })
-KB:AddToggle('ConstantBlock', {
-    Text='Constant Block (Test Mode)', Default=false,
-    Tooltip='Holds block while any enemy is near. Use this to test if key works at all',
-    Callback=function(v) Settings.ConstantBlock=v end
-})
-KB:AddSlider('ConstRange', { Text='Constant Range', Default=15, Min=5, Max=50, Rounding=0, Suffix=' studs', Callback=function(v) Settings.ConstantRange=v end })
-
-local KG = Tabs.Main:AddRightGroupbox('Combat Keys (OFF = your combo)')
+local KG = Tabs.Main:AddLeftGroupbox('Combat Keys (OFF = your combo)')
 for _, it in ipairs({
     {k=Enum.UserInputType.MouseButton1, n='M1 (Left Click)', f='M1'},
-    {k=Enum.KeyCode.E, n='E', f='E'}, {k=Enum.KeyCode.R, n='R', f='R'},
-    {k=Enum.KeyCode.T, n='T', f='T'}, {k=Enum.KeyCode.Q, n='Q', f='Q'},
-    {k=Enum.KeyCode.Z, n='Z', f='Z'}, {k=Enum.KeyCode.X, n='X', f='X'},
-    {k=Enum.KeyCode.C, n='C', f='C'}, {k=Enum.KeyCode.V, n='V', f='V'},
+    {k=Enum.KeyCode.E,n='E',f='E'},{k=Enum.KeyCode.R,n='R',f='R'},{k=Enum.KeyCode.T,n='T',f='T'},
+    {k=Enum.KeyCode.Q,n='Q',f='Q'},{k=Enum.KeyCode.Z,n='Z',f='Z'},{k=Enum.KeyCode.X,n='X',f='X'},
+    {k=Enum.KeyCode.C,n='C',f='C'},{k=Enum.KeyCode.V,n='V',f='V'},
 }) do
     KG:AddToggle(it.f, { Text=it.n, Default=false, Callback=function(v) Settings.CombatKeys[it.k]=v end })
 end
@@ -425,97 +507,252 @@ local l1 = SB:AddLabel('Total: 0')
 local l2 = SB:AddLabel('Blocks: 0')
 local l3 = SB:AddLabel('Parries: 0')
 local l4 = SB:AddLabel('Last: None')
+local l5 = SB:AddLabel('Tracked NPCs: 0')
 task.spawn(function()
     while task.wait(1) do
         if Library.Unloaded then break end
-        l1:SetText('Total: ' .. Stats.Total)
-        l2:SetText('Blocks: ' .. Stats.Blocks)
-        l3:SetText('Parries: ' .. Stats.Parries)
-        l4:SetText('Last: ' .. Stats.Last)
+        local c = 0; for _ in pairs(ActiveCharacters) do c += 1 end
+        pcall(function()
+            l1:SetText('Total: ' .. Stats.Total)
+            l2:SetText('Blocks: ' .. Stats.Blocks)
+            l3:SetText('Parries: ' .. Stats.Parries)
+            l4:SetText('Last: ' .. Stats.Last)
+            l5:SetText('Tracked NPCs: ' .. c)
+        end)
     end
 end)
 
--- Debug Tab
-local DB = Tabs.Debug:AddLeftGroupbox('Find Your Block Remote')
-DB:AddLabel('If keys still fail, log the remote:')
-DB:AddLabel('1. Press START below')
-DB:AddLabel('2. Manually press F in-game')
-DB:AddLabel('3. Check the printed output (F9)')
-DB:AddDivider()
-local logging = false
-local seen = {}
-pcall(function()
-    if hookmetamethod and getnamecallmethod and newcclosure then
-        local old
-        old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local m = getnamecallmethod()
-            if logging and (m == "FireServer" or m == "InvokeServer") then
-                local ok, path = pcall(function() return self:GetFullName() end)
-                if ok and not seen[path] then
-                    seen[path] = true
-                    local args = {...}
-                    local s = ""
-                    for i, v in ipairs(args) do s = s .. tostring(v) .. ", " end
-                    print("[SYNTAX REMOTE] " .. path .. " | ARGS: " .. s)
-                    pcall(function() appendfile(remoteLogFile, path .. " | " .. s .. "\n") end)
-                end
-            end
-            return old(self, ...)
-        end))
+-- ============================ PLAYER TAB ============================
+local MovementGroupBox = Tabs.Player:AddLeftGroupbox('Movement Mods')
+
+MovementGroupBox:AddToggle('WSToggle_Noflag', {
+    Text = 'Enable WalkSpeed',
+    Default = false,
+    Callback = function(v) Settings.WalkSpeedEnabled = v end
+})
+
+MovementGroupBox:AddSlider('WSSlider_Noflag', {
+    Text = 'WalkSpeed Value',
+    Default = 16,
+    Min = 16,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(v) Settings.WalkSpeedValue = v end
+})
+
+MovementGroupBox:AddDivider()
+
+MovementGroupBox:AddToggle('FlyToggle_Noflag', {
+    Text = 'Enable Fly Mode',
+    Default = false,
+    Callback = function(v)
+        Settings.FlyEnabled = v
+        setFlyState(v)
     end
-end)
-DB:AddToggle('LogRemotes', { Text='START Remote Logger', Default=false, Callback=function(v)
-    logging = v
-    if v then seen = {} Library:Notify('Logging ON - press F manually now', 3) end
+})
+
+MovementGroupBox:AddSlider('FlySlider_Noflag', {
+    Text = 'Fly Speed',
+    Default = 50,
+    Min = 10,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(v) Settings.FlySpeed = v end
+})
+
+-- ============================ BLOCK FIX TAB ============================
+local F1 = Tabs.Fix:AddLeftGroupbox('STEP 1 - Keyboard Method')
+
+local blockKeyList = {'F','G','H','B','N','Y','LeftShift','LeftControl','Space','Q','E','R','T','Z','X','C','V','One','Two','Three'}
+F1:AddDropdown('BlockKeyDrop', {
+    Values = blockKeyList, Default = 1, Text = 'Block Key',
+    Tooltip = 'Set this to your ACTUAL in-game block key',
+    Callback = function(v)
+        local kc = Enum.KeyCode[v]
+        if kc then Settings.BlockKey = kc end
+    end
+})
+F1:AddSlider('HoldTime', {
+    Text='Hold Duration', Default=0.30, Min=0.05, Max=1, Rounding=2, Suffix='s',
+    Tooltip='Try 0.30 - 0.50', Callback=function(v) Settings.HoldTime=v end
+})
+F1:AddDropdown('MethodDrop', {
+    Values={'Both','VirtualInput','keypress'}, Default='Both', Text='Input Method',
+    Callback=function(v) Settings.Method=v end
+})
+F1:AddButton({ Text='🔧 TEST BLOCK', Func=function()
+    doBlock(true)
+    Library:Notify('Fired ' .. (Settings.UseRemote and 'REMOTE' or Settings.BlockKey.Name), 2)
 end })
-DB:AddButton({ Text='Clear Remote Log', Func=function() seen={} pcall(function() writefile(remoteLogFile, "-- Remote Log --\n") end) Library:Notify('Cleared', 2) end })
+F1:AddToggle('ConstantBlock', {
+    Text='Constant Block (hold near enemy)', Default=false,
+    Callback=function(v) Settings.ConstantBlock=v end
+})
+F1:AddSlider('ConstRange', { Text='Constant Range', Default=15, Min=5, Max=50, Rounding=0, Suffix=' studs', Callback=function(v) Settings.ConstantRange=v end })
 
-local DB2 = Tabs.Debug:AddRightGroupbox('Info')
-local dlbl = DB2:AddLabel('Tracked NPCs: 0')
-task.spawn(function()
-    while task.wait(2) do
-        if Library.Unloaded then break end
-        local c = 0
-        for _ in pairs(ActiveCharacters) do c += 1 end
-        dlbl:SetText('Tracked NPCs: ' .. c)
+local F2 = Tabs.Fix:AddRightGroupbox('STEP 2 - Remote Mode (BEST FIX)')
+F2:AddLabel('1. Turn ON recorder')
+F2:AddLabel('2. Press BLOCK key manually')
+F2:AddLabel('3. Turn recorder OFF')
+F2:AddLabel('4. Pick remote in dropdown')
+F2:AddLabel('5. Test Fire until you block')
+F2:AddDivider()
+F2:AddLabel('Hook Available: ' .. tostring(HookOK))
+
+local remoteDropdown
+
+F2:AddToggle('RecordToggle', {
+    Text='● RECORD REMOTES', Default=false,
+    Callback=function(v)
+        Recording = v
+        if v then
+            Captured = {}
+            Library:Notify('Recording... press BLOCK key now', 3)
+        else
+            local names = {}
+            for _, c in ipairs(Captured) do table.insert(names, c.label) end
+            if #names == 0 then names = {'(nothing captured)'} end
+            pcall(function() remoteDropdown:SetValues(names) end)
+            Library:Notify('Captured ' .. #Captured .. ' remotes', 3)
+        end
     end
-end)
-DB2:AddLabel('keypress exists: ' .. tostring(keypress ~= nil))
-DB2:AddLabel('hookmetamethod: ' .. tostring(hookmetamethod ~= nil))
+})
 
--- Anims Tab
+remoteDropdown = F2:AddDropdown('RemoteList', {
+    Values={'(record first)'}, Default=1, Text='Captured Remotes', Callback=function() end
+})
+
+local function selectedCapture()
+    local val = nil
+    pcall(function() val = remoteDropdown.Value end)
+    if not val then return nil end
+    for _, c in ipairs(Captured) do if c.label == val then return c end end
+    return nil
+end
+
+F2:AddButton({ Text='▶ Test Fire Selected', Func=function()
+    local c = selectedCapture()
+    if not c then Library:Notify('Nothing selected', 2) return end
+    local ok = fireSlot(c)
+    Library:Notify(ok and ('Fired: ' .. c.obj.Name) or 'Failed to fire', 3)
+end })
+
+F2:AddButton({ Text='✅ Save as BLOCK START', Func=function()
+    local c = selectedCapture()
+    if not c then Library:Notify('Nothing selected', 2) return end
+    SlotStart = c
+    Library:Notify('BLOCK START set: ' .. c.obj.Name, 3)
+end })
+
+F2:AddButton({ Text='⏹ Save as BLOCK END (optional)', Func=function()
+    local c = selectedCapture()
+    if not c then Library:Notify('Nothing selected', 2) return end
+    SlotEnd = c
+    Library:Notify('BLOCK END set: ' .. c.obj.Name, 3)
+end })
+
+F2:AddToggle('UseRemoteToggle', {
+    Text='🚀 USE REMOTE MODE', Default=false,
+    Callback=function(v)
+        Settings.UseRemote = v
+        if v and not SlotStart then Library:Notify('⚠ No BLOCK START saved yet!', 3) end
+    end
+})
+
+local F3 = Tabs.Fix:AddLeftGroupbox('Diagnostics')
+local exec = "unknown"
+pcall(function() if identifyexecutor then exec = identifyexecutor() end end)
+F3:AddLabel('Executor: ' .. tostring(exec))
+F3:AddLabel('keypress: ' .. tostring(keypress ~= nil))
+F3:AddLabel('keyrelease: ' .. tostring(keyrelease ~= nil))
+F3:AddLabel('hookmetamethod: ' .. tostring(hookmetamethod ~= nil))
+F3:AddButton({ Text='Print Info to Console (F9)', Func=function()
+    print("=== SYNTAX HUB DIAGNOSTIC ===")
+    print("Executor:", exec)
+    print("keypress:", keypress ~= nil, "keyrelease:", keyrelease ~= nil)
+    print("hookmetamethod:", hookmetamethod ~= nil)
+    print("BlockKey:", Settings.BlockKey.Name, "Hold:", Settings.HoldTime, "Method:", Settings.Method)
+    print("UseRemote:", Settings.UseRemote, "SlotStart:", SlotStart and SlotStart.path or "nil")
+    print("Captured count:", #Captured)
+    for i, c in ipairs(Captured) do print("  ["..i.."]", c.path) end
+    Library:Notify('Printed to console (F9)', 3)
+end })
+
+-- ============================ ANIMATIONS TAB ============================
 local CB = Tabs.Anims:AddLeftGroupbox('Add Custom Animation')
 local cId, cT, cN = "", "0", ""
 CB:AddInput('AnimID', { Default='', Numeric=true, Finished=true, Text='Animation ID', Callback=function(v) cId=v end })
-CB:AddInput('AnimT', { Default='0', Numeric=true, Finished=true, Text='Timing (s)', Callback=function(v) cT=v end })
-CB:AddInput('AnimN', { Default='', Text='Name', Callback=function(v) cN=v end })
+CB:AddInput('AnimT',  { Default='0', Numeric=true, Finished=true, Text='Timing (s)',  Callback=function(v) cT=v end })
+CB:AddInput('AnimN',  { Default='', Text='Name', Callback=function(v) cN=v end })
 CB:AddButton({ Text='Add', Func=function()
     if cId == "" or cId:match("%D") then Library:Notify('❌ Invalid ID', 3) return end
     local t = tonumber(cT) or 0
     AnimTimings[cId] = t
-    appendfile(customAnimFile, string.format("%s | %s | %s\n", cId, t, cN))
+    pcall(function() appendfile(customAnimFile, string.format("%s | %s | %s\n", cId, t, cN)) end)
     Library:Notify('✅ Added ' .. cId, 3)
 end })
 
 local RB = Tabs.Anims:AddRightGroupbox('Recorder')
-RB:AddToggle('RecOn', { Text='Enable Recorder', Default=true, Callback=function(v) Settings.RecorderEnabled=v end })
-RB:AddToggle('BlockUnk', { Text='Block Unknown', Default=true, Callback=function(v) Settings.BlockUnknown=v end })
-RB:AddSlider('RecR', { Text='Radius', Default=150, Min=10, Max=300, Rounding=0, Suffix=' studs', Callback=function(v) Settings.RecorderRadius=v end })
-RB:AddButton({ Text='Clear Recordings', Func=function() RecordedAnimations={} writefile(unknownAnimFile,"-- Unknown --\n") Library:Notify('Cleared',2) end })
+RB:AddToggle('RecOn',    { Text='Enable Recorder', Default=true, Callback=function(v) Settings.RecorderEnabled=v end })
+RB:AddToggle('BlockUnk', { Text='Block Unknown',   Default=true, Callback=function(v) Settings.BlockUnknown=v end })
+RB:AddSlider('RecR',     { Text='Radius', Default=150, Min=10, Max=300, Rounding=0, Suffix=' studs', Callback=function(v) Settings.RecorderRadius=v end })
+RB:AddButton({ Text='Clear Recordings', Func=function()
+    RecordedAnimations = {}
+    pcall(function() writefile(unknownAnimFile, "-- Unknown --\n") end)
+    Library:Notify('Cleared', 2)
+end })
 
--- UI Settings
-local MG = Tabs['UI Settings']:AddLeftGroupbox('Menu')
-MG:AddButton({ Text='Unload', Func=function() Library:Unload() end })
-MG:AddLabel('Menu bind'):AddKeyPicker('MenuKey', { Default='End', NoUI=true, Text='Menu keybind' })
-Library.ToggleKeybind = Options.MenuKey
+-- ============================ UI SETTINGS TAB ============================
+local MG = Tabs['UI Settings']:AddLeftGroupbox('Menu Visibility')
+
+-- Robust menu toggle
+local function toggleMenu()
+    local ok = pcall(function() Library:Toggle() end)
+    if not ok then
+        pcall(function()
+            local sg = Library.ScreenGui
+            if sg then sg.Enabled = not sg.Enabled end
+        end)
+    end
+end
+
+local MenuKeyName = 'RightShift'
+
+MG:AddDropdown('MenuKeyDrop', {
+    Values = {'RightShift','RightControl','LeftAlt','Insert','Delete','Home','End','PageUp','PageDown','F1','F2','F3','F4','CapsLock','Backquote'},
+    Default = 1,
+    Text = 'Hide/Show Key',
+    Tooltip = 'Press this key to hide or show the menu',
+    Callback = function(v)
+        MenuKeyName = v
+        Library:Notify('Menu key set to: ' .. v, 2)
+    end
+})
+
+MG:AddButton({ Text='👁 Hide Menu Now', Func=function() toggleMenu() end })
+MG:AddDivider()
+MG:AddLabel('Default key: RightShift')
+MG:AddLabel('Press it to hide, press again to show')
+MG:AddDivider()
+MG:AddButton({ Text='Unload Script', Func=function() Library:Unload() end })
+
+-- Manual key listener (guaranteed to work)
+Connections.MenuToggle = UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode[MenuKeyName] then
+        toggleMenu()
+    end
+end)
+
+local CFG = Tabs['UI Settings']:AddRightGroupbox('Config')
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
 SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({'MenuKey','BlockKeyPick'})
+SaveManager:SetIgnoreIndexes({'RemoteList','MenuKeyDrop','BlockKeyDrop'})
 ThemeManager:SetFolder('SyntaxHub')
 SaveManager:SetFolder('SyntaxHub/AutoPB')
-SaveManager:BuildConfigSection(Tabs['UI Settings'])
-ThemeManager:ApplyToTab(Tabs['UI Settings'])
+pcall(function() SaveManager:BuildConfigSection(Tabs['UI Settings']) end)
+pcall(function() ThemeManager:ApplyToTab(Tabs['UI Settings']) end)
 
 Library:OnUnload(function()
     for _, c in pairs(Connections) do if typeof(c)=="RBXScriptConnection" then c:Disconnect() end end
@@ -523,15 +760,19 @@ Library:OnUnload(function()
     pcall(function() if keyrelease then keyrelease(getVK(Settings.BlockKey)) end end)
     table.clear(ActiveCharacters)
     StatusGui:Destroy()
+    
+    -- Cleanup movement overrides
+    if Settings.FlyEnabled then setFlyState(false) end
+
     Library.Unloaded = true
 end)
 
 Connections.P = UserInputService.InputBegan:Connect(function(i, gp)
     if gp then return end
     if i.KeyCode == Enum.KeyCode.P then
-        Toggles.MainToggle:SetValue(not Toggles.MainToggle.Value)
+        pcall(function() MainToggleRef:SetValue(not MainToggleRef.Value) end)
     end
 end)
 
-Library:Notify('SYNTAX HUB V4.4 ✅ | Go to Key Settings if block fails', 5)
+Library:Notify('SYNTAX HUB V5.1 | RightShift = hide menu', 5)
 updateStatus("Disabled", Color3.fromRGB(200,200,200))
