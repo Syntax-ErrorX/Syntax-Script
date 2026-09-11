@@ -1,6 +1,7 @@
 --[[
-    SYNTAX HUB - AUTO PB & PARRY V5.1 [FIXED ERRORS + MENU BIND + ESP]
+    SYNTAX HUB - AUTO PB, PARRY & AUTO LOCK-ON V5.5
     Grand Piece Online
+    [FIXED: no more lag, locks onto enemies only, quest NPCs ignored]
 ]]
 
 local Players = game:GetService("Players")
@@ -17,7 +18,7 @@ local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
 local Window = Library:CreateWindow({
-    Title = 'SYNTAX HUB - GPO AUTO PB',
+    Title = 'SYNTAX HUB - GPO AUTO PB & COMBAT',
     Center = true, AutoShow = true, TabPadding = 8, MenuFadeTime = 0.2
 })
 
@@ -56,6 +57,7 @@ end
 
 local Tabs = {
     Main = Window:AddTab('Main'),
+    Combat = Window:AddTab('Combat'),
     Player = Window:AddTab('Player'),
     Visuals = Window:AddTab('Visuals'),
     Fix = Window:AddTab('BLOCK FIX'),
@@ -76,13 +78,23 @@ local Settings = {
     RecorderEnabled=true, RecorderRadius=150, BlockUnknown=true, RecorderCustomName="",
     WalkSpeedEnabled=false, WalkSpeedValue=16,
     FlyEnabled=false, FlySpeed=50,
-    IslandESPEnabled=false
+    IslandESPEnabled=false,
+    -- Auto Lock-On
+    AimbotEnabled=false,
+    AimbotKey=Enum.UserInputType.MouseButton2,
+    AimbotTargetType="NPCs",
+    AimbotTargetPart="Head",
+    AimbotFOV=150,
+    AimbotShowFOV=false,
+    AimbotSmoothness=1,
+    IgnoreFriendlyNPCs=true,
 }
 
 local CombatState = { ActiveKeys={}, LastActionTime=0, ComboCooldown=0.5, LastKeyAllowedBlocking=nil }
 local Stats = { Total=0, Blocks=0, Parries=0, Last="None" }
 local RecordedAnimations, ActiveCharacters, blockedAnims = {}, {}, {}
 local IslandESPObjects = {}
+local TargetStatus = {} -- [char] = { ok = true/false, reason = "why" }  (cached, no per-frame lag)
 
 -- ===== NOTIFICATIONS =====
 local NQ = { q={}, busy=false, cd=0.4, last=0 }
@@ -103,6 +115,152 @@ function NQ:Run()
         end
         self.busy = false
     end)
+end
+
+-- ===== FOV CIRCLE =====
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Thickness = 1
+FOVCircle.NumSides = 64
+FOVCircle.Radius = Settings.AimbotFOV
+FOVCircle.Filled = false
+FOVCircle.Visible = false
+FOVCircle.Color = Color3.fromRGB(255, 60, 60)
+
+-- ===== NPC CLASSIFIER (runs ONCE per NPC, result cached) =====
+local FRIENDLY_WORDS = {"quest","shop","talk","merchant","dialogue","vendor","interact","speak","trade","sell","buy"}
+
+local function classifyCharacter(char)
+    if not char or not char.Parent then return false end
+    if char == LocalPlayer.Character then
+        TargetStatus[char] = {ok=false, reason="self"}
+        return false
+    end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        TargetStatus[char] = {ok=false, reason="no humanoid"}
+        return false
+    end
+
+    -- Players are always valid (type filter handles them later)
+    if Players:GetPlayerFromCharacter(char) then
+        TargetStatus[char] = {ok=true, reason="player"}
+        return true
+    end
+
+    if not Settings.IgnoreFriendlyNPCs then
+        TargetStatus[char] = {ok=true, reason="filter off"}
+        return true
+    end
+
+    -- Sitting NPC = quest/dialogue
+    if hum.Sit or hum.SeatPart then
+        TargetStatus[char] = {ok=false, reason="sitting NPC"}
+        return false
+    end
+
+    -- Name / parent folder checks
+    local n = string.lower(char.Name)
+    local parentName = string.lower(char.Parent and char.Parent.Name or "")
+    for _, w in ipairs(FRIENDLY_WORDS) do
+        if n:find(w) then
+            TargetStatus[char] = {ok=false, reason="name contains '"..w.."'"}
+            return false
+        end
+        if parentName:find(w) then
+            TargetStatus[char] = {ok=false, reason="folder contains '"..w.."'"}
+            return false
+        end
+    end
+
+    -- One-time scan for quest markers (the yellow QUEST !) and talk prompts
+    for _, inst in ipairs(char:GetDescendants()) do
+        if inst:IsA("ProximityPrompt") or inst:IsA("ClickDetector") then
+            TargetStatus[char] = {ok=false, reason="talk prompt"}
+            return false
+        end
+        if inst:IsA("TextLabel") or inst:IsA("TextButton") then
+            local gui = inst:FindFirstAncestorWhichIsA("BillboardGui") or inst:FindFirstAncestorWhichIsA("SurfaceGui")
+            if gui then
+                local t = string.lower(tostring(inst.Text or ""))
+                for _, w in ipairs(FRIENDLY_WORDS) do
+                    if t:find(w) then
+                        TargetStatus[char] = {ok=false, reason="overhead '"..w.."'"}
+                        return false
+                    end
+                end
+            end
+        end
+    end
+
+    -- No friendly signs found = hostile / killable
+    TargetStatus[char] = {ok=true, reason="hostile"}
+    return true
+end
+
+local function isValidAimTarget(char)
+    local s = TargetStatus[char]
+    if s == nil then
+        return classifyCharacter(char)
+    end
+    return s.ok
+end
+
+local function isAimKeyDown()
+    local key = Settings.AimbotKey
+    if key == Enum.UserInputType.MouseButton1 then
+        return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+    elseif key == Enum.UserInputType.MouseButton2 then
+        return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    else
+        return UserInputService:IsKeyDown(key)
+    end
+end
+
+local function getClosestAimTarget()
+    local closestTarget = nil
+    local maxDist = Settings.AimbotFOV
+    local cam = Workspace.CurrentCamera
+    local myChar = LocalPlayer.Character
+    if not (myChar and myChar:FindFirstChild("HumanoidRootPart")) then return nil end
+
+    local mousePos = UserInputService:GetMouseLocation()
+
+    for char, _ in pairs(ActiveCharacters) do
+        if char and char.Parent and char ~= LocalPlayer.Character then
+            local isPlayer = Players:GetPlayerFromCharacter(char) ~= nil
+
+            local okType = false
+            if isPlayer then
+                okType = (Settings.AimbotTargetType == "Players" or Settings.AimbotTargetType == "Both")
+            else
+                okType = (Settings.AimbotTargetType == "NPCs" or Settings.AimbotTargetType == "Both")
+            end
+
+            if okType and isValidAimTarget(char) then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local part = char:FindFirstChild(Settings.AimbotTargetPart)
+                        or char:FindFirstChild("Head")
+                        or char:FindFirstChild("Torso")
+                        or char:FindFirstChild("UpperTorso")
+                        or char:FindFirstChild("HumanoidRootPart")
+
+                    if part then
+                        local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
+                        if onScreen and screenPos.Z > 0 then
+                            local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                            if dist < maxDist then
+                                maxDist = dist
+                                closestTarget = part
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closestTarget
 end
 
 -- ===== VK CONVERTER =====
@@ -279,8 +437,7 @@ Connections.HB = RunService.Heartbeat:Connect(function()
     else
         updateStatus("Disabled", Color3.fromRGB(200,200,200))
     end
-    
-    -- WALKSPEED LOOP
+
     if Settings.WalkSpeedEnabled then
         local char = LocalPlayer.Character
         if char then
@@ -305,12 +462,12 @@ local function setFlyState(state)
         if hum then hum.PlatformStand = true end
         if flyBg then flyBg:Destroy() end
         if flyBv then flyBv:Destroy() end
-        
+
         flyBg = Instance.new("BodyGyro", hrp)
         flyBg.P = 9e4
         flyBg.maxTorque = Vector3.new(9e9, 9e9, 9e9)
         flyBg.cframe = hrp.CFrame
-        
+
         flyBv = Instance.new("BodyVelocity", hrp)
         flyBv.velocity = Vector3.new(0,0,0)
         flyBv.maxForce = Vector3.new(9e9, 9e9, 9e9)
@@ -354,7 +511,7 @@ Connections.CharAdded = LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
--- ===== ISLAND ESP LOOP =====
+-- ===== ISLAND ESP =====
 local function clearIslandESP()
     for _, obj in pairs(IslandESPObjects) do
         if obj.Text then
@@ -367,18 +524,16 @@ end
 
 Connections.IslandESPRun = RunService.RenderStepped:Connect(function()
     if not Settings.IslandESPEnabled then
-        if #IslandESPObjects > 0 then clearIslandESP() end
+        if next(IslandESPObjects) then clearIslandESP() end
         return
     end
 
-    -- Scan for islands every 5 seconds to avoid lag
     if tick() - (Settings.LastIslandScan or 0) > 5 then
         Settings.LastIslandScan = tick()
-        
-        -- GPO typically stores map locations in Env, Islands, or Locations folders
+
         local envFolders = {Workspace:FindFirstChild("Env"), Workspace:FindFirstChild("Islands"), Workspace:FindFirstChild("Locations")}
         local currentIslands = {}
-        
+
         for _, folder in ipairs(envFolders) do
             if folder then
                 for _, child in ipairs(folder:GetChildren()) do
@@ -391,8 +546,7 @@ Connections.IslandESPRun = RunService.RenderStepped:Connect(function()
                 end
             end
         end
-        
-        -- Fallback: If no folders are found, scan workspace for things that look like islands
+
         if not envFolders[1] and not envFolders[2] and not envFolders[3] then
             for _, child in ipairs(Workspace:GetChildren()) do
                 if child:IsA("Model") and (child.Name:lower():find("island") or child.Name:lower():find("town") or child.Name:lower():find("base")) then
@@ -404,7 +558,6 @@ Connections.IslandESPRun = RunService.RenderStepped:Connect(function()
             end
         end
 
-        -- Create Drawing objects for new islands
         for child, data in pairs(currentIslands) do
             if not IslandESPObjects[child] then
                 local txt = Drawing.new("Text")
@@ -416,8 +569,7 @@ Connections.IslandESPRun = RunService.RenderStepped:Connect(function()
                 IslandESPObjects[child] = {Text = txt, Data = data}
             end
         end
-        
-        -- Remove old Drawings
+
         for child, obj in pairs(IslandESPObjects) do
             if not currentIslands[child] then
                 if obj.Text then
@@ -429,7 +581,6 @@ Connections.IslandESPRun = RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Update text positions and distance
     local myChar = LocalPlayer.Character
     local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local cam = Workspace.CurrentCamera
@@ -496,6 +647,21 @@ task.spawn(function()
     end
 end)
 
+-- ===== SLOW RE-SCAN (keeps target cache fresh, very cheap) =====
+task.spawn(function()
+    while task.wait(15) do
+        if Library.Unloaded then break end
+        for char in pairs(ActiveCharacters) do
+            if char and char.Parent then
+                classifyCharacter(char)
+            else
+                ActiveCharacters[char] = nil
+                TargetStatus[char] = nil
+            end
+        end
+    end
+end)
+
 -- ===== CHARACTER TRACKING =====
 local function setupChar(char)
     if not char or not char:IsA("Model") or ActiveCharacters[char] then return end
@@ -511,9 +677,25 @@ local function setupChar(char)
     end
     ActiveCharacters[char] = true
 
+    -- Classify once now, then again shortly after (quest billboards can load late)
+    task.delay(0.5, function() if char.Parent then classifyCharacter(char) end end)
+    task.delay(2, function() if char.Parent then classifyCharacter(char) end end)
+
+    -- Re-classify if a quest billboard / prompt appears later
+    char.DescendantAdded:Connect(function(d)
+        if d:IsA("BillboardGui") or d:IsA("ProximityPrompt") or d:IsA("ClickDetector") then
+            task.delay(0.1, function() if char.Parent then classifyCharacter(char) end end)
+        end
+    end)
+
     local conn
     conn = anim.AnimationPlayed:Connect(function(track)
-        if not char.Parent then conn:Disconnect(); ActiveCharacters[char] = nil; return end
+        if not char.Parent then
+            conn:Disconnect()
+            ActiveCharacters[char] = nil
+            TargetStatus[char] = nil
+            return
+        end
         if Players:GetPlayerFromCharacter(char) and not Settings.BlockPlayers then return end
 
         local myChar = LocalPlayer.Character
@@ -580,6 +762,26 @@ Workspace.DescendantAdded:Connect(function(d)
     end
 end)
 
+-- ===== AIMBOT RENDER LOOP (cheap: only reads cached results) =====
+Connections.AimbotLoop = RunService.RenderStepped:Connect(function()
+    if Settings.AimbotEnabled and Settings.AimbotShowFOV then
+        FOVCircle.Position = UserInputService:GetMouseLocation()
+        FOVCircle.Radius = Settings.AimbotFOV
+        FOVCircle.Visible = true
+    else
+        FOVCircle.Visible = false
+    end
+
+    if Settings.AimbotEnabled and isAimKeyDown() then
+        local target = getClosestAimTarget()
+        if target then
+            local cam = Workspace.CurrentCamera
+            local aimPos = CFrame.new(cam.CFrame.Position, target.Position)
+            cam.CFrame = cam.CFrame:Lerp(aimPos, 1 / math.max(Settings.AimbotSmoothness, 1))
+        end
+    end
+end)
+
 -- ============================ MAIN TAB ============================
 local L = Tabs.Main:AddLeftGroupbox('Auto Perfect Block')
 local MainToggleRef = L:AddToggle('MainToggle', { Text='Enable Auto Block (P)', Default=false, Callback=function(v) Settings.Enabled=v end })
@@ -621,6 +823,101 @@ task.spawn(function()
         end)
     end
 end)
+
+-- ============================ COMBAT TAB ============================
+local AutoAimGroup = Tabs.Combat:AddLeftGroupbox('Rifle Auto Lock-On')
+
+AutoAimGroup:AddToggle('AimbotEnableToggle', {
+    Text = 'Enable Lock-On Aim',
+    Default = false,
+    Tooltip = 'Locks camera onto killable targets for Rifles/Guns',
+    Callback = function(v) Settings.AimbotEnabled = v end
+})
+
+AutoAimGroup:AddToggle('IgnoreFriendlyToggle', {
+    Text = 'Ignore Friendly/Quest NPCs',
+    Default = true,
+    Tooltip = 'Skips QUEST ! NPCs, shopkeepers, sitting and talkable NPCs',
+    Callback = function(v)
+        Settings.IgnoreFriendlyNPCs = v
+        -- Re-classify everything when toggled
+        for char in pairs(ActiveCharacters) do
+            if char and char.Parent then classifyCharacter(char) end
+        end
+    end
+})
+
+AutoAimGroup:AddButton({ Text='🔍 Print Target Scan (F9 console)', Func=function()
+    print("=== AIM TARGET SCAN ===")
+    for char in pairs(ActiveCharacters) do
+        if char and char.Parent then
+            local s = TargetStatus[char]
+            if not s then classifyCharacter(char); s = TargetStatus[char] end
+            local st = s.ok and "✅ TARGET " or "❌ IGNORE "
+            print(string.format("%s | %s | reason: %s | parent: %s", st, char.Name, s.reason or "?", char.Parent.Name))
+        end
+    end
+    print("=== END SCAN ===")
+    Library:Notify('Scan printed - press F9 to view', 3)
+end })
+
+AutoAimGroup:AddDropdown('AimbotKeyBind', {
+    Values = {'MouseButton2','MouseButton1','LeftShift','LeftControl','E','Q','C'},
+    Default = 1,
+    Text = 'Aim Key (Hold)',
+    Tooltip = 'TIP: try Q or E - holding Right Mouse also rotates your camera',
+    Callback = function(v)
+        if v == 'MouseButton1' then
+            Settings.AimbotKey = Enum.UserInputType.MouseButton1
+        elseif v == 'MouseButton2' then
+            Settings.AimbotKey = Enum.UserInputType.MouseButton2
+        else
+            Settings.AimbotKey = Enum.KeyCode[v]
+        end
+    end
+})
+
+AutoAimGroup:AddDropdown('AimbotTypeSelect', {
+    Values = {'NPCs', 'Players', 'Both'},
+    Default = 1,
+    Text = 'Target Type',
+    Callback = function(v) Settings.AimbotTargetType = v end
+})
+
+AutoAimGroup:AddDropdown('AimbotPartSelect', {
+    Values = {'Head', 'Torso', 'HumanoidRootPart'},
+    Default = 1,
+    Text = 'Aim Target Part',
+    Callback = function(v) Settings.AimbotTargetPart = v end
+})
+
+local VisualAimGroup = Tabs.Combat:AddRightGroupbox('Aim Customization')
+
+VisualAimGroup:AddSlider('AimRadiusSlider', {
+    Text = 'Aim FOV Radius',
+    Default = 150,
+    Min = 20,
+    Max = 800,
+    Rounding = 0,
+    Suffix = ' px',
+    Callback = function(v) Settings.AimbotFOV = v end
+})
+
+VisualAimGroup:AddToggle('AimFOVShowToggle', {
+    Text = 'Show FOV Circle',
+    Default = false,
+    Callback = function(v) Settings.AimbotShowFOV = v end
+})
+
+VisualAimGroup:AddSlider('AimSmoothnessSlider', {
+    Text = 'Aim Smoothness',
+    Default = 1,
+    Min = 1,
+    Max = 15,
+    Rounding = 1,
+    Tooltip = '1 = instant lock. Higher = more human-like.',
+    Callback = function(v) Settings.AimbotSmoothness = v end
+})
 
 -- ============================ PLAYER TAB ============================
 local MovementGroupBox = Tabs.Player:AddLeftGroupbox('Movement Mods')
@@ -815,7 +1112,6 @@ end })
 -- ============================ UI SETTINGS TAB ============================
 local MG = Tabs['UI Settings']:AddLeftGroupbox('Menu Visibility')
 
--- Robust menu toggle
 local function toggleMenu()
     local ok = pcall(function() Library:Toggle() end)
     if not ok then
@@ -846,7 +1142,6 @@ MG:AddLabel('Press it to hide, press again to show')
 MG:AddDivider()
 MG:AddButton({ Text='Unload Script', Func=function() Library:Unload() end })
 
--- Manual key listener (guaranteed to work)
 Connections.MenuToggle = UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Enum.KeyCode[MenuKeyName] then
@@ -869,13 +1164,14 @@ Library:OnUnload(function()
     pcall(function() VIM:SendKeyEvent(false, Settings.BlockKey, false, game) end)
     pcall(function() if keyrelease then keyrelease(getVK(Settings.BlockKey)) end end)
     table.clear(ActiveCharacters)
+    table.clear(TargetStatus)
     StatusGui:Destroy()
-    
-    -- Cleanup movement overrides
+
     if Settings.FlyEnabled then setFlyState(false) end
-    
-    -- Cleanup ESP
+
     clearIslandESP()
+
+    if FOVCircle then FOVCircle:Remove() end
 
     Library.Unloaded = true
 end)
@@ -887,5 +1183,5 @@ Connections.P = UserInputService.InputBegan:Connect(function(i, gp)
     end
 end)
 
-Library:Notify('SYNTAX HUB V5.1 | RightShift = hide menu', 5)
+Library:Notify('SYNTAX HUB V5.5 | Lag fixed + quest NPCs ignored', 5)
 updateStatus("Disabled", Color3.fromRGB(200,200,200))
