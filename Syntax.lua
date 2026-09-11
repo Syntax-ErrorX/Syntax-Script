@@ -1,5 +1,5 @@
 --[[
-    SYNTAX HUB - AUTO PB & PARRY V5.1 [FIXED ERRORS + MENU BIND]
+    SYNTAX HUB - AUTO PB & PARRY V5.1 [FIXED ERRORS + MENU BIND + ESP]
     Grand Piece Online
 ]]
 
@@ -57,6 +57,7 @@ end
 local Tabs = {
     Main = Window:AddTab('Main'),
     Player = Window:AddTab('Player'),
+    Visuals = Window:AddTab('Visuals'),
     Fix = Window:AddTab('BLOCK FIX'),
     Anims = Window:AddTab('Animations'),
     ['UI Settings'] = Window:AddTab('UI Settings'),
@@ -73,14 +74,15 @@ local Settings = {
         [Enum.KeyCode.X]=false,[Enum.KeyCode.C]=false,[Enum.KeyCode.V]=false,
     },
     RecorderEnabled=true, RecorderRadius=150, BlockUnknown=true, RecorderCustomName="",
-    -- New Movement Settings
     WalkSpeedEnabled=false, WalkSpeedValue=16,
-    FlyEnabled=false, FlySpeed=50
+    FlyEnabled=false, FlySpeed=50,
+    IslandESPEnabled=false
 }
 
 local CombatState = { ActiveKeys={}, LastActionTime=0, ComboCooldown=0.5, LastKeyAllowedBlocking=nil }
 local Stats = { Total=0, Blocks=0, Parries=0, Last="None" }
 local RecordedAnimations, ActiveCharacters, blockedAnims = {}, {}, {}
+local IslandESPObjects = {}
 
 -- ===== NOTIFICATIONS =====
 local NQ = { q={}, busy=false, cd=0.4, last=0 }
@@ -347,8 +349,106 @@ end)
 
 Connections.CharAdded = LocalPlayer.CharacterAdded:Connect(function(char)
     if Settings.FlyEnabled then
-        task.wait(0.5) -- wait for HRP loading
+        task.wait(0.5)
         setFlyState(true)
+    end
+end)
+
+-- ===== ISLAND ESP LOOP =====
+local function clearIslandESP()
+    for _, obj in pairs(IslandESPObjects) do
+        if obj.Text then
+            obj.Text.Visible = false
+            obj.Text:Remove()
+        end
+    end
+    IslandESPObjects = {}
+end
+
+Connections.IslandESPRun = RunService.RenderStepped:Connect(function()
+    if not Settings.IslandESPEnabled then
+        if #IslandESPObjects > 0 then clearIslandESP() end
+        return
+    end
+
+    -- Scan for islands every 5 seconds to avoid lag
+    if tick() - (Settings.LastIslandScan or 0) > 5 then
+        Settings.LastIslandScan = tick()
+        
+        -- GPO typically stores map locations in Env, Islands, or Locations folders
+        local envFolders = {Workspace:FindFirstChild("Env"), Workspace:FindFirstChild("Islands"), Workspace:FindFirstChild("Locations")}
+        local currentIslands = {}
+        
+        for _, folder in ipairs(envFolders) do
+            if folder then
+                for _, child in ipairs(folder:GetChildren()) do
+                    if child:IsA("Model") or child:IsA("Folder") then
+                        local part = child:IsA("Model") and child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart", true)
+                        if part then
+                            currentIslands[child] = {Name = child.Name, Part = part}
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Fallback: If no folders are found, scan workspace for things that look like islands
+        if not envFolders[1] and not envFolders[2] and not envFolders[3] then
+            for _, child in ipairs(Workspace:GetChildren()) do
+                if child:IsA("Model") and (child.Name:lower():find("island") or child.Name:lower():find("town") or child.Name:lower():find("base")) then
+                    local part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart", true)
+                    if part then
+                        currentIslands[child] = {Name = child.Name, Part = part}
+                    end
+                end
+            end
+        end
+
+        -- Create Drawing objects for new islands
+        for child, data in pairs(currentIslands) do
+            if not IslandESPObjects[child] then
+                local txt = Drawing.new("Text")
+                txt.Size = 16
+                txt.Center = true
+                txt.Outline = true
+                txt.Color = Color3.fromRGB(150, 255, 150)
+                txt.Font = 2
+                IslandESPObjects[child] = {Text = txt, Data = data}
+            end
+        end
+        
+        -- Remove old Drawings
+        for child, obj in pairs(IslandESPObjects) do
+            if not currentIslands[child] then
+                if obj.Text then
+                    obj.Text.Visible = false
+                    obj.Text:Remove()
+                end
+                IslandESPObjects[child] = nil
+            end
+        end
+    end
+
+    -- Update text positions and distance
+    local myChar = LocalPlayer.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local cam = Workspace.CurrentCamera
+
+    for child, obj in pairs(IslandESPObjects) do
+        local part = obj.Data.Part
+        if part and part.Parent and myHrp then
+            local pos, onScreen = cam:WorldToViewportPoint(part.Position)
+            if onScreen then
+                local dist = (myHrp.Position - part.Position).Magnitude
+                obj.Text.Position = Vector2.new(pos.X, pos.Y)
+                obj.Text.Text = string.format("[%s] [%.0f studs]", obj.Data.Name, dist)
+                obj.Text.Visible = true
+            else
+                obj.Text.Visible = false
+            end
+        else
+            obj.Text.Visible = false
+        end
     end
 end)
 
@@ -560,6 +660,16 @@ MovementGroupBox:AddSlider('FlySlider_Noflag', {
     Callback = function(v) Settings.FlySpeed = v end
 })
 
+-- ============================ VISUALS TAB ============================
+local VisGroupBox = Tabs.Visuals:AddLeftGroupbox('World ESP')
+
+VisGroupBox:AddToggle('IslandESPToggle_Noflag', {
+    Text = 'Enable Island ESP',
+    Default = false,
+    Tooltip = 'Shows island names and distance on your screen',
+    Callback = function(v) Settings.IslandESPEnabled = v end
+})
+
 -- ============================ BLOCK FIX TAB ============================
 local F1 = Tabs.Fix:AddLeftGroupbox('STEP 1 - Keyboard Method')
 
@@ -763,6 +873,9 @@ Library:OnUnload(function()
     
     -- Cleanup movement overrides
     if Settings.FlyEnabled then setFlyState(false) end
+    
+    -- Cleanup ESP
+    clearIslandESP()
 
     Library.Unloaded = true
 end)
